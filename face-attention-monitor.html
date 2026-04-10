@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Face Attention Monitor</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0f1117;
+    color: #e4e4e7;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 20px; color: #fff; }
+  .header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+  .header .badge {
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .badge-live { background: #ef4444; color: #fff; animation: pulse 1.5s infinite; }
+  .badge-loading { background: #f59e0b; color: #000; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .6; } }
+
+  .main-grid {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 24px;
+  }
+  .video-section { display: flex; flex-direction: column; gap: 16px; }
+  .canvas-wrap {
+    position: relative;
+    background: #1a1b23;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #2a2b35;
+  }
+  .canvas-wrap canvas { display: block; width: 100%; height: auto; }
+  .canvas-label {
+    position: absolute; top: 8px; left: 8px;
+    font-size: 0.65rem; padding: 2px 8px;
+    background: rgba(0,0,0,.6); border-radius: 6px; color: #aaa;
+  }
+
+  .right-panel { display: flex; flex-direction: column; gap: 16px; }
+
+  /* Metrics cards */
+  .metrics-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .card {
+    background: #1a1b23;
+    border: 1px solid #2a2b35;
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .card-title { font-size: 0.7rem; color: #71717a; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+  .card-value { font-size: 1.6rem; font-weight: 700; }
+  .card-sub { font-size: 0.75rem; color: #71717a; margin-top: 4px; }
+  .text-green { color: #22c55e; }
+  .text-red { color: #ef4444; }
+  .text-yellow { color: #f59e0b; }
+  .text-blue { color: #3b82f6; }
+
+  /* Gauge */
+  .gauge { margin-top: 6px; }
+  .gauge-track {
+    height: 8px;
+    background: #27272a;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .gauge-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width .3s ease;
+  }
+  .gauge-fill-green { background: linear-gradient(90deg, #22c55e, #16a34a); }
+  .gauge-fill-red { background: linear-gradient(90deg, #ef4444, #dc2626); }
+  .gauge-fill-blue { background: linear-gradient(90deg, #3b82f6, #2563eb); }
+  .gauge-fill-yellow { background: linear-gradient(90deg, #f59e0b, #d97706); }
+
+  /* Timeline */
+  .timeline-card { flex: 1; overflow: hidden; }
+  .timeline-card .card-title { margin-bottom: 12px; }
+  .timeline-container { display: flex; gap: 2px; align-items: flex-end; height: 80px; }
+  .timeline-bar {
+    flex: 1;
+    min-width: 3px;
+    border-radius: 2px 2px 0 0;
+    transition: height .2s ease;
+  }
+  .timeline-bar.present { background: #22c55e; }
+  .timeline-bar.absent { background: #ef4444; }
+  .timeline-bar.unknown { background: #3f3f46; }
+
+  /* Status footer */
+  .status-bar {
+    margin-top: 16px;
+    padding: 10px 16px;
+    background: #1a1b23;
+    border: 1px solid #2a2b35;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    color: #71717a;
+    display: flex;
+    gap: 24px;
+  }
+  .status-bar span { white-space: nowrap; }
+
+  /* Speed selector */
+  .speed-selector {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 16px;
+  }
+  .speed-selector label {
+    font-size: 0.75rem; color: #71717a; text-transform: uppercase; letter-spacing: .05em;
+  }
+  .speed-btn {
+    padding: 5px 14px;
+    font-size: 0.75rem;
+    border: 1px solid #2a2b35;
+    background: #1a1b23;
+    color: #a1a1aa;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .speed-btn:hover { border-color: #3b82f6; color: #e4e4e7; }
+  .speed-btn.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+
+  /* Model load info */
+  .model-load-info {
+    font-size: 0.75rem;
+    color: #71717a;
+    padding: 8px 16px;
+    background: #1a1b23;
+    border: 1px solid #2a2b35;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  .model-load-info span { color: #e4e4e7; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Face Attention Monitor</h1>
+  <span class="badge badge-loading" id="statusBadge">Loading…</span>
+</div>
+
+<div class="model-load-info" id="modelLoadInfo">
+  Model loaded: <span id="modelSizeInfo">—</span> in <span id="modelTimeInfo">—</span>
+</div>
+
+<div class="speed-selector">
+  <label>Detection Speed:</label>
+  <button class="speed-btn active" data-delay="50" data-label="5 FPS">~5 FPS</button>
+  <button class="speed-btn" data-delay="1000" data-label="1 FPS">1 FPS</button>
+  <button class="speed-btn" data-delay="3000" data-label="1/3s">1 per 3s</button>
+</div>
+
+<div class="main-grid">
+  <!-- Left: camera + detection canvases -->
+  <div class="video-section">
+    <div class="canvas-wrap">
+      <canvas id="preview" width="320" height="240"></canvas>
+      <div class="canvas-label">Camera Preview</div>
+    </div>
+    <div class="canvas-wrap">
+      <canvas id="detection" width="320" height="240"></canvas>
+      <div class="canvas-label">Detection Overlay</div>
+    </div>
+  </div>
+
+  <!-- Right: metrics + timeline -->
+  <div class="right-panel">
+    <div class="metrics-row">
+      <!-- Attention Score -->
+      <div class="card">
+        <div class="card-title">Attention Score</div>
+        <div class="card-value" id="scoreValue">—</div>
+        <div class="card-sub" id="scoreSub">Initializing…</div>
+        <div class="gauge">
+          <div class="gauge-track"><div class="gauge-fill gauge-fill-green" id="scoreGauge" style="width:0%"></div></div>
+        </div>
+      </div>
+      <!-- Status -->
+      <div class="card">
+        <div class="card-title">Status</div>
+        <div class="card-value" id="statusValue">—</div>
+        <div class="card-sub" id="statusSub">waiting for camera</div>
+      </div>
+      <!-- Analysis Time -->
+      <div class="card">
+        <div class="card-title">Analysis Time</div>
+        <div class="card-value text-blue" id="timeValue">—</div>
+        <div class="card-sub" id="timeSub">ms per frame</div>
+      </div>
+      <!-- CPU Estimate -->
+      <div class="card">
+        <div class="card-title">CPU Estimate (5 fps target)</div>
+        <div class="card-value text-yellow" id="cpuValue">—</div>
+        <div class="card-sub" id="cpuSub">of single core</div>
+        <div class="gauge">
+          <div class="gauge-track"><div class="gauge-fill gauge-fill-yellow" id="cpuGauge" style="width:0%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Session Stats -->
+    <div class="metrics-row">
+      <div class="card">
+        <div class="card-title">Session Duration</div>
+        <div class="card-value text-blue" id="sessionDur">0:00</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Attention Rate</div>
+        <div class="card-value text-green" id="attnRate">—</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Detections</div>
+        <div class="card-value" id="detectCount">0</div>
+        <div class="card-sub" id="detectSub">total frames analyzed</div>
+      </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="card timeline-card">
+      <div class="card-title">Attention Timeline (last 60s)</div>
+      <div class="timeline-container" id="timeline"></div>
+    </div>
+  </div>
+</div>
+
+<div class="status-bar">
+  <span id="modelStatus">Model: loading…</span>
+  <span id="cameraStatus">Camera: requesting…</span>
+  <span id="fpsStatus">FPS: —</span>
+</div>
+
+<!-- Hidden video element for camera stream -->
+<video id="cam" autoplay playsinline muted style="position:absolute;opacity:0;pointer-events:none;width:0;height:0;"></video>
+<!-- Hidden capture canvas for face detection input -->
+<canvas id="cap" width="320" height="240" style="display:none;"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14/dist/face-api.js"></script>
+<script>
+(async function () {
+  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14/model/';
+
+  // Elements
+  const video     = document.getElementById('cam');
+  const preview   = document.getElementById('preview');
+  const preCtx    = preview.getContext('2d');
+  const detection = document.getElementById('detection');
+  const detCtx    = detection.getContext('2d');
+  const cap       = document.getElementById('cap');
+  const capCtx    = cap.getContext('2d');
+
+  const statusBadge  = document.getElementById('statusBadge');
+  const scoreValue   = document.getElementById('scoreValue');
+  const scoreSub     = document.getElementById('scoreSub');
+  const scoreGauge   = document.getElementById('scoreGauge');
+  const statusValue  = document.getElementById('statusValue');
+  const statusSub    = document.getElementById('statusSub');
+  const timeValue    = document.getElementById('timeValue');
+  const cpuValue     = document.getElementById('cpuValue');
+  const cpuGauge     = document.getElementById('cpuGauge');
+  const sessionDur   = document.getElementById('sessionDur');
+  const attnRate     = document.getElementById('attnRate');
+  const detectCount  = document.getElementById('detectCount');
+  const detectSub    = document.getElementById('detectSub');
+  const modelStatus  = document.getElementById('modelStatus');
+  const cameraStatus = document.getElementById('cameraStatus');
+  const fpsStatus    = document.getElementById('fpsStatus');
+  const timelineEl   = document.getElementById('timeline');
+
+  // State
+  let totalFrames = 0;
+  let presentFrames = 0;
+  let detectDelay = 50;       // ms between detection cycles (default ~5fps)
+  const sessionStart = Date.now();
+  const timeline = [];        // last 60 entries: 'present' | 'absent'
+  const TIMELINE_LEN = 60;
+
+  // Speed selector buttons
+  document.querySelectorAll('.speed-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      detectDelay = parseInt(btn.dataset.delay, 10);
+      // Update CPU card title to reflect target
+      const cpuTitle = document.querySelector('#cpuValue').closest('.card').querySelector('.card-title');
+      cpuTitle.textContent = 'CPU Estimate (' + btn.dataset.label + ' target)';
+    });
+  });
+
+  // Init timeline bars
+  for (let i = 0; i < TIMELINE_LEN; i++) {
+    const bar = document.createElement('div');
+    bar.className = 'timeline-bar unknown';
+    bar.style.height = '10%';
+    timelineEl.appendChild(bar);
+  }
+
+  // ---- Load models (with timing) ----
+  modelStatus.textContent = 'Model: loading…';
+  const modelLoadStart = performance.now();
+  await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+  await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
+  const modelLoadMs = Math.round(performance.now() - modelLoadStart);
+  modelStatus.textContent = 'Model: ready ✓';
+
+  // Show model load info
+  const modelLoadInfo = document.getElementById('modelLoadInfo');
+  const modelSizeInfo = document.getElementById('modelSizeInfo');
+  const modelTimeInfo = document.getElementById('modelTimeInfo');
+  modelSizeInfo.textContent = '~3 MB (TinyFaceDetector + Landmarks68Tiny)';
+  modelTimeInfo.textContent = modelLoadMs < 1000
+    ? modelLoadMs + ' ms'
+    : (modelLoadMs / 1000).toFixed(2) + ' s';
+  modelLoadInfo.style.display = 'block';
+
+  // ---- Start camera ----
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' } });
+  } catch (e) {
+    cameraStatus.textContent = 'Camera: denied ✗';
+    statusBadge.textContent = 'No Camera';
+    statusBadge.className = 'badge';
+    statusBadge.style.background = '#71717a';
+    return;
+  }
+
+  video.srcObject = stream;
+
+  // FIX #1: Explicitly play and wait for video to be ready before rendering
+  await video.play();
+  await new Promise(resolve => {
+    if (video.readyState >= 2) return resolve();
+    video.addEventListener('loadeddata', resolve, { once: true });
+  });
+
+  cameraStatus.textContent = 'Camera: active ✓';
+  statusBadge.textContent = 'Live';
+  statusBadge.className = 'badge badge-live';
+
+  // ---- Render loop: draw camera frames to preview canvas ----
+  function renderPreview() {
+    if (video.readyState >= 2) {
+      preCtx.drawImage(video, 0, 0, preview.width, preview.height);
+    }
+    requestAnimationFrame(renderPreview);
+  }
+  requestAnimationFrame(renderPreview);
+
+  // ---- Detection loop ----
+  const DETECT_OPTIONS = new faceapi.TinyFaceDetectorOptions({
+    inputSize: 320,          // FIX #2: increased from 160 for better detection
+    scoreThreshold: 0.2      // FIX #2: lowered from 0.4 to reduce false negatives
+  });
+
+  async function detect() {
+    // FIX #2: draw video to capture canvas so detection gets valid pixel data
+    if (video.readyState >= 2) {
+      capCtx.drawImage(video, 0, 0, cap.width, cap.height);
+    }
+
+    const t0 = performance.now();
+    const result = await faceapi
+      .detectSingleFace(cap, DETECT_OPTIONS)
+      .withFaceLandmarks(true);   // useTinyModel = true
+    const elapsed = performance.now() - t0;
+
+    totalFrames++;
+    detectCount.textContent = totalFrames;
+
+    // Analysis time
+    const ms = Math.round(elapsed);
+    timeValue.textContent = ms + 'ms';
+
+    // CPU estimate based on current detection interval
+    const budgetMs = detectDelay + elapsed;      // total cycle time budget
+    const targetFps = 1000 / (detectDelay + elapsed);
+    const cpuPct = ((elapsed / (detectDelay + elapsed)) * 100);
+    cpuValue.textContent = cpuPct.toFixed(1) + '%';
+    // FIX #3: cap gauge fill at 100% while label shows real number
+    cpuGauge.style.width = Math.min(cpuPct, 100) + '%';
+
+    // Detection overlay
+    detCtx.clearRect(0, 0, detection.width, detection.height);
+    detCtx.drawImage(video, 0, 0, detection.width, detection.height);
+
+    if (result) {
+      presentFrames++;
+      const score = result.detection.score;
+      const pct = Math.round(score * 100);
+
+      scoreValue.textContent = pct + '%';
+      scoreSub.textContent = 'confidence ' + score.toFixed(3);
+      scoreGauge.style.width = pct + '%';
+
+      statusValue.textContent = 'PRESENT';
+      statusValue.className = 'card-value text-green';
+      statusSub.textContent = 'face detected';
+
+      // Draw bounding box
+      const box = result.detection.box;
+      detCtx.strokeStyle = '#22c55e';
+      detCtx.lineWidth = 2;
+      detCtx.strokeRect(box.x, box.y, box.width, box.height);
+
+      // Draw landmarks
+      if (result.landmarks) {
+        const pts = result.landmarks.positions;
+        detCtx.fillStyle = '#3b82f6';
+        for (const p of pts) {
+          detCtx.beginPath();
+          detCtx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+          detCtx.fill();
+        }
+      }
+
+      timeline.push('present');
+    } else {
+      scoreValue.textContent = '0%';
+      scoreSub.textContent = 'no face detected';
+      scoreGauge.style.width = '0%';
+
+      statusValue.textContent = 'ABSENT';
+      statusValue.className = 'card-value text-red';
+      statusSub.textContent = 'no face detected';
+
+      timeline.push('absent');
+    }
+
+    // Trim timeline
+    while (timeline.length > TIMELINE_LEN) timeline.shift();
+
+    // Update timeline bars
+    const bars = timelineEl.children;
+    for (let i = 0; i < TIMELINE_LEN; i++) {
+      const idx = i - (TIMELINE_LEN - timeline.length);
+      if (idx < 0) {
+        bars[i].className = 'timeline-bar unknown';
+        bars[i].style.height = '10%';
+      } else {
+        const state = timeline[idx];
+        bars[i].className = 'timeline-bar ' + state;
+        bars[i].style.height = state === 'present' ? '100%' : '30%';
+      }
+    }
+
+    // Attention rate
+    const rate = totalFrames > 0 ? ((presentFrames / totalFrames) * 100).toFixed(1) : 0;
+    attnRate.textContent = rate + '%';
+
+    // Session duration
+    const sec = Math.floor((Date.now() - sessionStart) / 1000);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    sessionDur.textContent = m + ':' + String(s).padStart(2, '0');
+
+    // FPS
+    fpsStatus.textContent = 'FPS: ' + (1000 / elapsed).toFixed(1);
+
+    // Schedule next detection at chosen speed
+    setTimeout(detect, detectDelay);
+  }
+
+  detect();
+})();
+</script>
+</body>
+</html>
